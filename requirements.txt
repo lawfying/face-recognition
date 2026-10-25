@@ -1,0 +1,9 @@
+--index-url https://pypi.tuna.tsinghua.edu.cn/simple
+--extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/
+
+paddlepaddle-gpu==3.2.0
+opencv-python==4.8.1.78
+numpy==1.24.3
+flask==2.3.3
+pillow==10.0.1
+matplotlib==3.7.2

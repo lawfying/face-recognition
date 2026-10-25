@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>人脸情绪识别系统</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+    .container { background: #fff; padding: 24px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,.1); text-align: center; }
+    .upload-area { border: 2px dashed #ccc; padding: 36px; margin: 18px 0; border-radius: 8px; cursor: pointer; }
+    .upload-area:hover { border-color: #4CAF50; }
+    #image-preview { max-width: 100%; max-height: 420px; margin: 16px 0; display: none; }
+    #camera-preview { width: 100%; max-width: 720px; border-radius: 10px; background: #000; }
+    .section { margin-top: 22px; padding-top: 18px; border-top: 1px solid #eee; }
+    .row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; align-items: center; }
+    select, input[type="number"] { padding: 8px 10px; border-radius: 6px; border: 1px solid #ddd; font-size: 14px; }
+    button { background: #4CAF50; color: #fff; padding: 10px 18px; border: 0; border-radius: 6px; cursor: pointer; font-size: 16px; }
+    button:hover { background: #45a049; }
+    button.secondary { background: #666; }
+    button.secondary:hover { background: #555; }
+    button.danger { background: #c62828; }
+    button.danger:hover { background: #b71c1c; }
+    #result { margin-top: 16px; font-size: 18px; padding: 10px; border-radius: 6px; display: none; }
+    .success { background: #dff0d8; color: #3c763d; }
+    .error { background: #f2dede; color: #a94442; }
+    #file-input { display: none; }
+    #capture-status { margin-top: 10px; font-size: 14px; color: #333; }
+    #pending-panel { display: none; margin-top: 14px; padding: 12px; border-radius: 10px; border: 1px solid #eee; background: #fafafa; }
+    .pending-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
+    .pending-card { border: 1px solid #eee; background: #fff; border-radius: 10px; padding: 10px; text-align: left; }
+    .pending-card img { width: 96px; height: 96px; image-rendering: pixelated; border-radius: 8px; border: 1px solid #eee; background: #fff; }
+    .pending-meta { display: grid; grid-template-columns: 96px 1fr; gap: 10px; align-items: center; }
+    .pending-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+    .pending-actions button { font-size: 14px; padding: 8px 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>人脸情绪识别系统</h1>
+    <p>支持识别：开心、悲伤、愤怒、惊讶、恐惧、厌恶、中性</p>
+
+    <div class="upload-area" onclick="document.getElementById('file-input').click()">
+      <p>点击上传图片或拖拽到此处</p>
+      <p>支持格式：JPG, PNG</p>
+    </div>
+
+    <input type="file" id="file-input" accept="image/*" onchange="previewImage(event)" />
+    <img id="image-preview" src="" alt="preview" />
+    <div style="margin-top: 10px;">
+      <button id="predict-btn" onclick="predictEmotion()" style="display:none;">识别情绪</button>
+    </div>
+
+    <div id="result"></div>
+
+    <div class="section">
+      <h2 style="margin: 0 0 10px 0;">摄像头实时识别</h2>
+      <div class="row" style="margin-bottom: 10px;">
+        <label>间隔(ms)：</label>
+        <input id="interval" type="number" min="150" max="2000" step="50" value="350" />
+      </div>
+      <div class="row" style="margin-bottom: 10px;">
+        <button id="start-camera" class="secondary" onclick="startCamera()">打开摄像头</button>
+        <button id="stop-camera" class="secondary" onclick="stopCamera()" disabled>关闭摄像头</button>
+        <button id="start-capture" onclick="startCapture()" disabled>开始识别</button>
+        <button id="stop-capture" class="danger" onclick="stopCapture()" disabled>停止识别</button>
+      </div>
+      <video id="camera-preview" autoplay playsinline muted></video>
+      <div id="capture-status">未开始识别</div>
+    </div>
+  </div>
+
+  <script>
+    let selectedImage = null;
+    let stream = null;
+    let captureTimer = null;
+    let captureBusy = false;
+
+    function previewImage(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      selectedImage = file;
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const preview = document.getElementById('image-preview');
+        preview.src = e.target.result;
+        preview.style.display = 'block';
+        document.getElementById('predict-btn').style.display = 'inline-block';
+        document.getElementById('result').style.display = 'none';
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function predictEmotion() {
+      if (!selectedImage) return;
+
+      const formData = new FormData();
+      formData.append('image', selectedImage);
+
+      fetch('/predict', { method: 'POST', body: formData })
+        .then(r => r.json())
+        .then(data => {
+          const resultDiv = document.getElementById('result');
+          resultDiv.style.display = 'block';
+
+          if (data.error) {
+            resultDiv.className = 'error';
+            resultDiv.innerHTML = `错误：${data.error}`;
+          } else {
+            resultDiv.className = 'success';
+            resultDiv.innerHTML = `<strong>识别结果：</strong>${data.emotion}<br/><strong>置信度：</strong>${data.confidence}%`;
+            
+            // 在图像上绘制人脸框和标签
+            const preview = document.getElementById('image-preview');
+            if (preview && data.face_location) {
+              drawFaceBox(preview, data.face_location, data.emotion);
+            }
+          }
+        })
+        .catch(err => {
+          const resultDiv = document.getElementById('result');
+          resultDiv.style.display = 'block';
+          resultDiv.className = 'error';
+          resultDiv.innerHTML = `请求错误：${err.message}`;
+        });
+    }
+    
+    function drawFaceBox(imgElement, faceLocation, emotion) {
+      // 创建一个canvas元素用于绘制
+      const canvas = document.createElement('canvas');
+      canvas.width = imgElement.naturalWidth || imgElement.width;
+      canvas.height = imgElement.naturalHeight || imgElement.height;
+      
+      const ctx = canvas.getContext('2d');
+      
+      // 首先绘制原始图像
+      ctx.drawImage(imgElement, 0, 0, canvas.width, canvas.height);
+      
+      // 绘制人脸框
+      ctx.strokeStyle = '#FF0000'; // 红色边框
+      ctx.lineWidth = 3;
+      ctx.strokeRect(faceLocation.x, faceLocation.y, faceLocation.w, faceLocation.h);
+      
+      // 绘制情绪标签
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+      ctx.fillRect(faceLocation.x, faceLocation.y - 25, faceLocation.w, 25);
+      
+      ctx.font = '16px Arial';
+      ctx.fillStyle = '#FFFFFF';
+      ctx.textAlign = 'center';
+      ctx.fillText(emotion, faceLocation.x + faceLocation.w/2, faceLocation.y - 8);
+      
+      // 将带有人脸框的图像替换原图
+      imgElement.src = canvas.toDataURL('image/jpeg');
+    }
+
+    document.addEventListener('dragover', e => { e.preventDefault(); e.stopPropagation(); });
+    document.addEventListener('drop', e => {
+      e.preventDefault(); e.stopPropagation();
+      const files = e.dataTransfer.files;
+      if (files && files.length > 0) {
+        document.getElementById('file-input').files = files;
+        previewImage({ target: { files } });
+      }
+    });
+
+    function setCaptureStatus(text) {
+      document.getElementById('capture-status').innerText = text;
+    }
+
+    async function startCamera() {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+        const video = document.getElementById('camera-preview');
+        video.srcObject = stream;
+        document.getElementById('start-capture').disabled = false;
+        document.getElementById('stop-camera').disabled = false;
+        setCaptureStatus('摄像头已打开，准备识别');
+      } catch (e) {
+        setCaptureStatus('打开摄像头失败：' + e.message);
+      }
+    }
+
+    function stopCamera() {
+      stopCapture();
+
+      const video = document.getElementById('camera-preview');
+      if (video && video.srcObject) {
+        try {
+          const tracks = video.srcObject.getTracks();
+          tracks.forEach(t => t.stop());
+        } catch (e) {}
+        video.srcObject = null;
+      }
+      stream = null;
+      document.getElementById('start-capture').disabled = true;
+      document.getElementById('stop-camera').disabled = true;
+      setCaptureStatus('摄像头已关闭');
+    }
+
+    function captureFrameBlob() {
+      const video = document.getElementById('camera-preview');
+      if (!video.videoWidth || !video.videoHeight) return null;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      return new Promise(resolve => {
+        canvas.toBlob(blob => resolve(blob), 'image/jpeg', 0.92);
+      });
+    }
+
+    async function startCapture() {
+      if (!stream) {
+        setCaptureStatus('请先打开摄像头');
+        return;
+      }
+      const interval = parseInt(document.getElementById('interval').value || '350', 10);
+      document.getElementById('start-capture').disabled = true;
+      document.getElementById('stop-capture').disabled = false;
+      setCaptureStatus('识别中...');
+
+      if (captureTimer) clearInterval(captureTimer);
+      captureTimer = setInterval(captureTick, Math.max(150, interval));
+    }
+
+    function stopCapture() {
+      if (captureTimer) {
+        clearInterval(captureTimer);
+        captureTimer = null;
+      }
+      document.getElementById('start-capture').disabled = false;
+      document.getElementById('stop-capture').disabled = true;
+      setCaptureStatus('已停止识别');
+    }
+
+    async function captureTick() {
+      if (captureBusy) return;
+      captureBusy = true;
+
+      const blob = await captureFrameBlob();
+      if (!blob) {
+        setCaptureStatus('等待摄像头画面...');
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('image', blob, 'frame.jpg');
+
+      try {
+        const r = await fetch('/predict', { method: 'POST', body: formData });
+        const data = await r.json();
+        if (data.error) {
+          setCaptureStatus('识别失败：' + data.error);
+          return;
+        }
+
+        const s = `预测=${data.emotion} | 置信度=${data.confidence}%`;
+        setCaptureStatus(s);
+      } catch (e) {
+        setCaptureStatus('请求错误：' + e.message);
+      } finally {
+        captureBusy = false;
+      }
+    }
+  </script>
+</body>
+</html>
